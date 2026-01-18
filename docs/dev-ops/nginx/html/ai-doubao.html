@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 流式对话助手</title>
+    <!-- 引入TailwindCSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .chat-container { @apply max-w-3xl mx-auto p-4 h-screen flex flex-col }
+            .chat-content { @apply flex-1 overflow-y-auto mb-4 bg-gray-50 rounded-lg p-4 }
+            .msg-item { @apply my-3 p-3 rounded-lg max-w-[90%] }
+            .user-msg { @apply bg-blue-500 text-white ml-auto }
+            .ai-msg { @apply bg-white border border-gray-200 mr-auto }
+            .input-group { @apply flex gap-2 }
+            .form-input { @apply flex-1 rounded-lg border border-gray-300 p-3 focus:outline-none focus:ring-2 focus:ring-blue-500 }
+            .send-btn { @apply bg-blue-500 text-white px-6 py-3 rounded-lg cursor-pointer hover:bg-blue-600 transition disabled:bg-gray-400 disabled:cursor-not-allowed }
+            .select-model { @apply rounded-lg border border-gray-300 p-3 focus:outline-none focus:ring-2 focus:ring-blue-500 mb-2 }
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+<div class="chat-container">
+    <h2 class="text-center text-xl font-bold text-gray-800 mb-4">AI 流式对话 (Spring AI Ollama)</h2>
+    <!-- 模型选择框 -->
+    <select id="modelSelect" class="select-model">
+        <option value="deepseek-r1:1.5b" selected>deepseek-r1:1.5b</option>
+        <option value="llama3:8b">llama3:8b</option>
+        <option value="qwen2:7b">qwen2:7b</option>
+    </select>
+    <!-- 对话展示区 -->
+    <div id="chatContent" class="chat-content"></div>
+    <!-- 输入和发送区 -->
+    <div class="input-group">
+        <input type="text" id="msgInput" class="form-input" placeholder="请输入你的问题..." autocomplete="off">
+        <button id="sendBtn" class="send-btn">发送</button>
+    </div>
+</div>
+
+<script>
+    // 获取DOM元素
+    const modelSelect = document.getElementById('modelSelect');
+    const msgInput = document.getElementById('msgInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const chatContent = document.getElementById('chatContent');
+
+    // 服务端流式接口地址
+    const BASE_API_URL = 'http://localhost:8090/api/v1/ollama/generate_stream';
+    // 全局EventSource对象，用于关闭流
+    let eventSource = null;
+
+    // 发送按钮点击事件
+    sendBtn.addEventListener('click', sendMessage);
+    // 回车触发发送
+    msgInput.addEventListener('keydown', e => e.key === 'Enter' && sendMessage());
+
+    /**
+     * 核心：发送消息并调用流式接口
+     */
+    function sendMessage() {
+        const message = msgInput.value.trim();
+        const model = modelSelect.value;
+        // 空内容不处理
+        if (!message) return;
+
+        // ========== 1. 状态处理：禁用按钮+清空输入框+追加用户消息 ==========
+        sendBtn.disabled = true;
+        msgInput.value = '';
+        appendMsg('user', message);
+
+        // ========== 2. 创建AI回复的空节点，用于流式追加内容 ==========
+        const aiMsgDom = document.createElement('div');
+        aiMsgDom.className = 'msg-item ai-msg';
+        aiMsgDom.innerHTML = '<span class="ai-text"></span>';
+        chatContent.appendChild(aiMsgDom);
+        const aiTextDom = aiMsgDom.querySelector('.ai-text');
+        // 滚动到底部
+        scrollToBottom();
+
+        // ========== 3. 拼接GET请求参数，注意URL编码防止中文/特殊字符报错 ==========
+        const params = new URLSearchParams();
+        params.append('model', model);
+        params.append('message', message);
+        const apiUrl = `${BASE_API_URL}?${params.toString()}`;
+
+        // ========== 4. 核心：创建EventSource 调用流式GET接口 ==========
+        eventSource = new EventSource(apiUrl);
+
+        /**
+         * 监听流式消息 - 核心回调
+         */
+        eventSource.onmessage = function (event) {
+            try {
+                // 解析服务端返回的单行JSON数据
+                const resData = JSON.parse(event.data);
+                // ✅ 按要求：从 result.output.content 获取应答文本
+                const content = resData?.result?.output?.content || '';
+                // ✅ content为空时，不追加任何内容
+                if (content) {
+                    aiTextDom.innerHTML += content;
+                    scrollToBottom();
+                }
+
+                // ✅ 按要求：从 result.metadata.finishReason = STOP 判断流结束
+                const finishReason = resData?.result?.metadata?.finishReason;
+                if (finishReason === 'STOP') {
+                    closeStream(); // 关闭流+恢复按钮状态
+                }
+            } catch (error) {
+                console.error('流式数据解析异常：', error);
+            }
+        };
+
+        // 监听流异常
+        eventSource.onerror = function (error) {
+            console.error('流式接口异常：', error);
+            aiTextDom.innerHTML += '<br/><span class="text-red-500">加载失败，请重试</span>';
+            closeStream();
+        };
+    }
+
+    /**
+     * 追加消息到对话区
+     * @param {String} type 消息类型 user-用户 ai-机器人
+     * @param {String} text 消息文本
+     */
+    function appendMsg(type, text) {
+        const msgDom = document.createElement('div');
+        msgDom.className = type === 'user' ? 'msg-item user-msg' : 'msg-item ai-msg';
+        msgDom.textContent = text;
+        chatContent.appendChild(msgDom);
+    }
+
+    /**
+     * 关闭流式连接 + 恢复页面状态
+     * 必须手动关闭EventSource，防止内存泄漏和无效请求
+     */
+    function closeStream() {
+        if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+        }
+        sendBtn.disabled = false;
+    }
+
+    /**
+     * 对话区滚动到底部
+     */
+    function scrollToBottom() {
+        chatContent.scrollTop = chatContent.scrollHeight;
+    }
+</script>
+</body>
+</html>

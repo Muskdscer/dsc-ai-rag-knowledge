@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI对话助手</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 自定义滚动条样式 */
+        .chat-container::-webkit-scrollbar {
+            width: 6px;
+        }
+        .chat-container::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+        .chat-container::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 10px;
+        }
+        .chat-container::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+        
+        /* 打字机效果 */
+        .typing-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #6b7280;
+            animation: typing 1.4s infinite;
+        }
+        
+        @keyframes typing {
+            0%, 60%, 100% {
+                transform: translateY(0);
+                opacity: 0.7;
+            }
+            30% {
+                transform: translateY(-10px);
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto max-w-4xl h-screen flex flex-col">
+        <!-- 头部 -->
+        <header class="bg-white shadow-sm border-b border-gray-200 px-6 py-4">
+            <h1 class="text-2xl font-bold text-gray-800">AI对话助手</h1>
+            <p class="text-sm text-gray-500 mt-1">基于Spring AI的智能对话系统</p>
+        </header>
+
+        <!-- 对话区域 -->
+        <div id="chatContainer" class="chat-container flex-1 overflow-y-auto px-6 py-4 space-y-4 bg-white">
+            <div class="text-center text-gray-400 py-8">
+                <svg class="w-16 h-16 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+                </svg>
+                <p>开始与AI对话吧</p>
+            </div>
+        </div>
+
+        <!-- 输入区域 -->
+        <div class="bg-white border-t border-gray-200 px-6 py-4">
+            <form id="chatForm" class="flex gap-3">
+                <input 
+                    type="text" 
+                    id="messageInput" 
+                    placeholder="输入您的问题..." 
+                    class="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    autocomplete="off"
+                >
+                <button 
+                    type="submit" 
+                    id="sendButton"
+                    class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                    发送
+                </button>
+            </form>
+            <div class="mt-2 flex items-center gap-4 text-sm text-gray-500">
+                <label class="flex items-center gap-2">
+                    <span>模型:</span>
+                    <input 
+                        type="text" 
+                        id="modelInput" 
+                        value="deepseek-r1:1.5b" 
+                        class="px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const chatContainer = document.getElementById('chatContainer');
+        const chatForm = document.getElementById('chatForm');
+        const messageInput = document.getElementById('messageInput');
+        const sendButton = document.getElementById('sendButton');
+        const modelInput = document.getElementById('modelInput');
+        
+        let currentEventSource = null;
+        let currentMessageDiv = null;
+        let currentContent = '';
+
+        // 添加用户消息
+        function addUserMessage(message) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'flex justify-end';
+            messageDiv.innerHTML = `
+                <div class="max-w-[80%] bg-blue-600 text-white rounded-lg px-4 py-3 shadow-sm">
+                    <p class="whitespace-pre-wrap break-words">${escapeHtml(message)}</p>
+                </div>
+            `;
+            chatContainer.appendChild(messageDiv);
+            scrollToBottom();
+        }
+
+        // 添加AI消息容器
+        function addAIMessageContainer() {
+            currentMessageDiv = document.createElement('div');
+            currentMessageDiv.className = 'flex justify-start';
+            currentMessageDiv.innerHTML = `
+                <div class="max-w-[80%] bg-gray-100 rounded-lg px-4 py-3 shadow-sm">
+                    <p class="whitespace-pre-wrap break-words text-gray-800"></p>
+                </div>
+            `;
+            chatContainer.appendChild(currentMessageDiv);
+            currentContent = '';
+            scrollToBottom();
+        }
+
+        // 更新AI消息内容
+        function updateAIMessage(content) {
+            if (currentMessageDiv) {
+                const contentP = currentMessageDiv.querySelector('p');
+                if (contentP) {
+                    currentContent += content;
+                    contentP.textContent = currentContent;
+                    scrollToBottom();
+                }
+            }
+        }
+
+        // 显示加载指示器
+        function showTypingIndicator() {
+            if (currentMessageDiv) {
+                const contentP = currentMessageDiv.querySelector('p');
+                if (contentP) {
+                    contentP.innerHTML = '<span class="typing-indicator"></span>';
+                }
+            }
+        }
+
+        // 移除加载指示器
+        function removeTypingIndicator() {
+            if (currentMessageDiv) {
+                const contentP = currentMessageDiv.querySelector('p');
+                if (contentP && contentP.innerHTML.includes('typing-indicator')) {
+                    contentP.textContent = '';
+                }
+            }
+        }
+
+        // 滚动到底部
+        function scrollToBottom() {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        // HTML转义
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // 清除欢迎消息
+        function clearWelcomeMessage() {
+            const welcomeMsg = chatContainer.querySelector('.text-center');
+            if (welcomeMsg) {
+                welcomeMsg.remove();
+            }
+        }
+
+        // 发送消息函数
+        function sendMessage() {
+            const message = messageInput.value.trim();
+            const model = modelInput.value.trim() || 'deepseek-r1:1.5b';
+            
+            if (!message) {
+                return;
+            }
+            
+            // 如果正在发送，不允许重复发送
+            if (sendButton.disabled) {
+                return;
+            }
+
+            // 清除输入框
+            messageInput.value = '';
+            
+            // 禁用发送按钮
+            sendButton.disabled = true;
+            sendButton.textContent = '发送中...';
+            
+            // 清除欢迎消息
+            clearWelcomeMessage();
+            
+            // 添加用户消息
+            addUserMessage(message);
+            
+            // 添加AI消息容器
+            addAIMessageContainer();
+            showTypingIndicator();
+            
+            // 关闭之前的连接
+            if (currentEventSource) {
+                currentEventSource.close();
+            }
+            
+            // 构建API URL
+            const apiUrl = `http://localhost:8090/api/v1/ollama/generate_stream?model=${encodeURIComponent(model)}&message=${encodeURIComponent(message)}`;
+            
+            // 创建EventSource连接
+            currentEventSource = new EventSource(apiUrl);
+            
+            currentEventSource.onmessage = (event) => {
+                try {
+                    removeTypingIndicator();
+                    
+                    // 解析SSE数据
+                    // SSE格式可能是: data: {...} 或直接是JSON
+                    let data = event.data;
+                    if (data.startsWith('data: ')) {
+                        data = data.substring(6);
+                    }
+                    
+                    // 跳过空数据
+                    if (!data || data.trim() === '') {
+                        return;
+                    }
+                    
+                    const response = JSON.parse(data);
+                    
+                    // 检查是否是数组格式（如用户提供的示例）
+                    let chatResponse;
+                    if (Array.isArray(response)) {
+                        // 数组格式: [{result: {...}}]
+                        chatResponse = response[0];
+                    } else if (response.result) {
+                        // 对象格式: {result: {...}}
+                        chatResponse = response;
+                    } else {
+                        // 可能是其他格式，尝试直接使用
+                        chatResponse = response;
+                    }
+                    
+                    // 获取content（可能为空，需要处理）
+                    if (chatResponse?.result?.output?.content !== undefined) {
+                        const content = chatResponse.result.output.content || '';
+                        if (content) {
+                            updateAIMessage(content);
+                        }
+                    }
+                    
+                    // 检查是否结束
+                    const finishReason = chatResponse?.result?.metadata?.finishReason;
+                    if (finishReason === 'STOP' || finishReason === 'stop' || finishReason === 'Stop') {
+                        currentEventSource.close();
+                        currentEventSource = null;
+                        sendButton.disabled = false;
+                        sendButton.textContent = '发送';
+                        currentMessageDiv = null;
+                    }
+                } catch (error) {
+                    console.error('解析响应错误:', error);
+                    console.error('原始数据:', event.data);
+                    // 如果解析失败，尝试显示原始数据（用于调试）
+                    if (currentMessageDiv) {
+                        const contentP = currentMessageDiv.querySelector('p');
+                        if (contentP && !contentP.textContent) {
+                            contentP.textContent = '数据解析错误，请查看控制台。';
+                            contentP.className += ' text-red-600';
+                        }
+                    }
+                }
+            };
+            
+            currentEventSource.onerror = (error) => {
+                console.error('EventSource错误:', error);
+                removeTypingIndicator();
+                
+                if (currentMessageDiv) {
+                    const contentP = currentMessageDiv.querySelector('p');
+                    if (contentP) {
+                        contentP.textContent = '连接错误，请检查服务是否正常运行。';
+                        contentP.className += ' text-red-600';
+                    }
+                }
+                
+                if (currentEventSource) {
+                    currentEventSource.close();
+                    currentEventSource = null;
+                }
+                
+                sendButton.disabled = false;
+                sendButton.textContent = '发送';
+                currentMessageDiv = null;
+            };
+        }
+
+        // 处理表单提交
+        chatForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            sendMessage();
+        });
+
+        // 页面卸载时关闭连接
+        window.addEventListener('beforeunload', () => {
+            if (currentEventSource) {
+                currentEventSource.close();
+            }
+        });
+    </script>
+</body>
+</html>

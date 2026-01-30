@@ -1,0 +1,11 @@
+postgresql密码验证问题
+
+docker-compose -f docker-compose-environment-aliyun.yml down
+docker-compose -f docker-compose-environment-aliyun.yml down
+
+docker exec vector_db psql -U postgres -c "ALTER USER postgres WITH PASSWORD 'postgres';" || \
+(docker exec vector_db bash -c "echo 'host all all 0.0.0.0/0 trust' > /var/lib/postgresql/data/pg_hba.conf" && \
+docker exec vector_db psql -U postgres -c 'SELECT pg_reload_conf();' && \
+docker exec vector_db psql -U postgres -c "ALTER USER postgres WITH PASSWORD 'postgres';" && \
+docker exec vector_db bash -c "echo 'host all all 0.0.0.0/0 scram-sha-256' > /var/lib/postgresql/data/pg_hba.conf" && \
+docker exec vector_db psql -U postgres -c 'SELECT pg_reload_conf();')

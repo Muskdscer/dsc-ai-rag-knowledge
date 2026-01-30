@@ -1,4 +1,5 @@
-# docker-compose -f docker-compose-environment-aliyun.yml up -d
+# docker-compose -f docker-compose-environment-aliyun-fixed.yml up -d
+# 改进版本：使用命名数据卷，确保数据持久化
 version: '3'
 services:
   # 对话模型
@@ -64,7 +65,7 @@ services:
       - PGPASSWORD=postgres
     volumes:
       - ./pgvector/sql/init.sql:/docker-entrypoint-initdb.d/init.sql
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data  # 使用命名数据卷，确保数据持久化
     logging:
       options:
         max-size: 10m
@@ -82,6 +83,7 @@ services:
 networks:
   my-network:
     driver: bridge
+
 volumes:
-  postgres_data:
+  postgres_data:  # 定义命名数据卷
     driver: local
